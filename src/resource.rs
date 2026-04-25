@@ -3,7 +3,7 @@ use bevy::{
     input::{
         ButtonState,
         common_conditions::{input_just_pressed, input_pressed},
-        keyboard::KeyboardInput,
+        keyboard::{Key, KeyboardInput},
     },
     prelude::*,
 };
@@ -25,7 +25,9 @@ pub fn cross_resource_plugin(app: &mut App) {
             fragrune_increment.run_if(input_pressed(KeyCode::Space)),
             fragrune_toggle_vis.run_if(input_just_pressed(KeyCode::Tab)),
             ctile_selector_move,
-            ctile_selector_sprite_update,
+            ctile_selector_render,
+            ctile_selector_letter_update,
+            ctile_selector_letter_render,
         ),
     );
 }
@@ -161,6 +163,7 @@ struct CrossTileSelector {
     e: Entity,
     x: i32,
     y: i32,
+    letter: Option<char>,
 }
 
 fn ctile_selector_init(
@@ -168,6 +171,8 @@ fn ctile_selector_init(
     ctile_q: Query<(Entity, &CrossTile, &Transform)>,
     cboard_s: Single<Entity, With<CrossBoard>>,
 ) {
+    let sprite_size = 110.;
+    let font_size = sprite_size / 4.;
     for (e, ctile, ctile_t) in ctile_q.iter() {
         if ctile.x == 0 && ctile.y == 0 {
             let mut selector_transform = *ctile_t;
@@ -178,9 +183,12 @@ fn ctile_selector_init(
                     e,
                     x: ctile.x,
                     y: ctile.y,
+                    letter: None,
                 },
-                Sprite::from_color(GRAY_200.with_alpha(0.02), Vec2::splat(110.)),
+                Sprite::from_color(GRAY_200.with_alpha(0.02), Vec2::splat(sprite_size)),
                 selector_transform,
+                Text2d::new("Z"),
+                TextFont::default().with_font_size(font_size),
             ));
             break;
         }
@@ -213,13 +221,50 @@ fn ctile_selector_move(
     }
 }
 
-fn ctile_selector_sprite_update(
+fn ctile_selector_render(
     transform_q: Query<&Transform, Without<CrossTileSelector>>,
-    mut ctile_selector_s: Single<(&mut Transform, &CrossTileSelector)>,
+    ctile_selector_s: Single<(&mut Transform, &CrossTileSelector)>,
 ) {
-    let Ok(new_t) = transform_q.get(ctile_selector_s.1.e) else {
+    let (mut ctile_sel_t, ctile_sel) = ctile_selector_s.into_inner();
+    let Ok(new_t) = transform_q.get(ctile_sel.e) else {
         return;
     };
 
-    *ctile_selector_s.0 = *new_t;
+    *ctile_sel_t = *new_t;
+}
+
+fn ctile_selector_letter_update(
+    mut ctile_selector_s: Single<&mut CrossTileSelector>,
+    mut keyboard: MessageReader<KeyboardInput>,
+) {
+    for letter in keyboard.read() {
+        if letter.state == ButtonState::Released {
+            return;
+        }
+
+        match &letter.logical_key {
+            Key::Character(smol_str) => {
+                let l = smol_str.chars().next().unwrap().to_ascii_uppercase();
+                if l >= 'A' && l <= 'Z' {
+                    ctile_selector_s.letter = Some(l);
+                }
+            }
+            Key::Backspace => {
+                ctile_selector_s.letter = None;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn ctile_selector_letter_render(ctile_selector_s: Single<(&mut Text2d, &CrossTileSelector)>) {
+    let (mut text_2d, ctile_sel) = ctile_selector_s.into_inner();
+    match ctile_sel.letter {
+        Some(l) => {
+            text_2d.0 = l.into();
+        }
+        None => {
+            text_2d.0 = "".to_string();
+        }
+    }
 }
