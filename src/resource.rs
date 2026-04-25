@@ -1,19 +1,31 @@
 use bevy::{
     color::palettes::tailwind::*,
-    input::common_conditions::{input_just_pressed, input_pressed},
+    input::{
+        ButtonState,
+        common_conditions::{input_just_pressed, input_pressed},
+        keyboard::KeyboardInput,
+    },
     prelude::*,
 };
 
 pub fn cross_resource_plugin(app: &mut App) {
     app.add_systems(
         Startup,
-        (crosstile_init, fragrune_init, fragrune_spawn_sprites).chain(),
+        (
+            cboard_init,
+            ctile_selector_init,
+            fragrune_init,
+            fragrune_spawn_sprites,
+        )
+            .chain(),
     );
     app.add_systems(
         Update,
         (
             fragrune_increment.run_if(input_pressed(KeyCode::Space)),
             fragrune_toggle_vis.run_if(input_just_pressed(KeyCode::Tab)),
+            ctile_selector_move,
+            ctile_selector_sprite_update,
         ),
     );
 }
@@ -62,7 +74,7 @@ fn fragrune_spawn_sprites(
 
     for ((e, frag), (x, y)) in frag_q.iter().zip(pos_vec.as_slice()) {
         cmd.entity(e).insert((
-            Sprite::from_color(BLUE_700, Vec2::splat(tile_size)),
+            Sprite::from_color(BLUE_800, Vec2::splat(tile_size)),
             Text2d::new(format!("{} {}", frag.letter, frag.amount)),
             TextFont::default().with_font_size(font_size),
             Transform::from_xyz(x * size_multiplier, y * size_multiplier + y_offset, 3.),
@@ -72,7 +84,7 @@ fn fragrune_spawn_sprites(
 
     for ((e, rune), (x, y)) in rune_q.iter().zip(pos_vec.as_slice()) {
         cmd.entity(e).insert((
-            Sprite::from_color(PURPLE_700, Vec2::splat(tile_size)),
+            Sprite::from_color(PURPLE_800, Vec2::splat(tile_size)),
             Text2d::new(format!("{} {}", rune.letter, rune.amount)),
             TextFont::default().with_font_size(font_size),
             Transform::from_xyz(x * size_multiplier, y * size_multiplier + y_offset, 2.),
@@ -114,32 +126,100 @@ struct CrossTile {
 #[derive(Component)]
 struct CrossBoard;
 
-fn crosstile_init(mut cmd: Commands) {
+fn cboard_init(mut cmd: Commands) {
     let tile_size = 100.;
     let tile_gap = tile_size / 20.;
     let size_multiplier = tile_size + tile_gap;
     let font_size = tile_size / 2.;
 
+    let range_y = 5;
+    let range_x = 11;
+
     cmd.spawn((
         CrossBoard,
         Transform::from_xyz(0., size_multiplier / 2., 0.),
-        Sprite::default(),
         Visibility::Visible,
     ))
     .with_children(|p| {
-        let range_x = 11;
-        let range_y = 5;
         for x in -range_x / 2..=range_x / 2 {
             for y in -range_y / 2..=range_y / 2 {
                 p.spawn((
                     CrossTile { letter: None, x, y },
-                    Sprite::from_color(GRAY_900, Vec2::splat(tile_size)),
+                    Sprite::from_color(GRAY_800, Vec2::splat(tile_size)),
                     Text2d::new(""),
                     TextFont::default().with_font_size(font_size),
-                    Transform::from_xyz(x as f32 * size_multiplier, y as f32 * size_multiplier, 0.),
+                    Transform::from_xyz(x as f32 * size_multiplier, y as f32 * size_multiplier, 1.),
                     Visibility::Inherited,
                 ));
             }
         }
     });
+}
+
+#[derive(Component)]
+struct CrossTileSelector {
+    e: Entity,
+    x: i32,
+    y: i32,
+}
+
+fn ctile_selector_init(
+    mut cmd: Commands,
+    ctile_q: Query<(Entity, &CrossTile, &Transform)>,
+    cboard_s: Single<Entity, With<CrossBoard>>,
+) {
+    for (e, ctile, ctile_t) in ctile_q.iter() {
+        if ctile.x == 0 && ctile.y == 0 {
+            let mut selector_transform = *ctile_t;
+            selector_transform.translation.z += 1.;
+
+            cmd.entity(cboard_s.entity()).with_child((
+                CrossTileSelector {
+                    e,
+                    x: ctile.x,
+                    y: ctile.y,
+                },
+                Sprite::from_color(GRAY_200.with_alpha(0.02), Vec2::splat(110.)),
+                selector_transform,
+            ));
+            break;
+        }
+    }
+}
+
+fn ctile_selector_move(
+    ctile_q: Query<(Entity, &CrossTile)>,
+    mut ctile_selector_s: Single<&mut CrossTileSelector>,
+    mut arrow_input: MessageReader<KeyboardInput>,
+) {
+    for key in arrow_input.read() {
+        let (x_add, y_add) = match (key.key_code, key.state) {
+            (KeyCode::ArrowUp, ButtonState::Pressed) => (0, 1),
+            (KeyCode::ArrowDown, ButtonState::Pressed) => (0, -1),
+            (KeyCode::ArrowLeft, ButtonState::Pressed) => (-1, 0),
+            (KeyCode::ArrowRight, ButtonState::Pressed) => (1, 0),
+            _ => (0, 0),
+        };
+
+        let x = ctile_selector_s.x + x_add;
+        let y = ctile_selector_s.y + y_add;
+        for (e, ctile) in ctile_q.iter() {
+            if x == ctile.x && y == ctile.y {
+                ctile_selector_s.e = e;
+                ctile_selector_s.x = x;
+                ctile_selector_s.y = y;
+            }
+        }
+    }
+}
+
+fn ctile_selector_sprite_update(
+    transform_q: Query<&Transform, Without<CrossTileSelector>>,
+    mut ctile_selector_s: Single<(&mut Transform, &CrossTileSelector)>,
+) {
+    let Ok(new_t) = transform_q.get(ctile_selector_s.1.e) else {
+        return;
+    };
+
+    *ctile_selector_s.0 = *new_t;
 }
